@@ -27,7 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -198,7 +198,7 @@ fun SearchBox(
                             )
                         }
                         items(places, key = { it.id }) { p ->
-                            ResultRow(Icons.Filled.Star, p.name, p.point.format(), null) {
+                            ResultRow(Icons.Filled.LocationOn, p.name, p.point.format(), null) {
                                 close()
                                 onPoint(p.point)
                             }

@@ -43,7 +43,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.outlined.Star
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -447,7 +447,8 @@ private fun BottomPanel(
                 }
                 IconButton(onClick = onSave, enabled = target != null) {
                     Icon(
-                        if (saved) Icons.Filled.Star else Icons.Outlined.Star,
+                        // Закрашенная — только когда метка стоит на сохранённом месте
+                        if (saved) rememberVectorPainter(Icons.Filled.Star) else painterResource(R.drawable.ic_star_border),
                         contentDescription = if (saved) "Изменить место" else "Сохранить в «Мои места»",
                         tint = if (saved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     )

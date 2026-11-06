@@ -373,10 +373,7 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
                                     SpoofState.setRouteSpeed(context, it)
                                 },
                                 onSpeedFinished = { MockEngine.routeCommand(context, SpoofService.ACTION_SPEED, speedKmh) },
-                                onPause = {
-                                    val action = if (status.route?.paused == true) SpoofService.ACTION_RESUME else SpoofService.ACTION_PAUSE
-                                    MockEngine.routeCommand(context, action)
-                                },
+                                onFinish = { MockEngine.routeCommand(context, SpoofService.ACTION_FINISH) },
                                 onStopHere = { MockEngine.routeCommand(context, SpoofService.ACTION_STOP_HERE) },
                             )
                         }

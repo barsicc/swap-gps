@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.barsicc.swapgps.engine.GeoPoint
 import io.github.barsicc.swapgps.engine.RouteProgress
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.roundToInt
 
 /** Маршрут, который построен, но поездка ещё не началась. */
@@ -44,38 +46,54 @@ data class RoutePreview(
     val error: String? = null,
 )
 
-private const val MIN_SPEED = 10f
-private const val MAX_SPEED = 150f
+private const val MIN_SPEED = 20.0
+private const val MAX_SPEED = 3000.0
+
+/** Ползунок нелинейный: левая половина — обычные скорости, правая — до 3000 км/ч. */
+private fun speedToPosition(kmh: Int): Float =
+    (ln(kmh.coerceIn(MIN_SPEED.toInt(), MAX_SPEED.toInt()) / MIN_SPEED) / ln(MAX_SPEED / MIN_SPEED)).toFloat()
+
+private fun positionToSpeed(position: Float): Int {
+    val raw = MIN_SPEED * exp(position * ln(MAX_SPEED / MIN_SPEED))
+    val step = when {
+        raw < 100 -> 5
+        raw < 1000 -> 10
+        else -> 50
+    }
+    return ((raw / step).roundToInt() * step).coerceIn(MIN_SPEED.toInt(), MAX_SPEED.toInt())
+}
 
 fun formatKm(meters: Double): String =
     if (meters < 1000) "${(meters / 10).roundToInt() * 10} м"
     else String.format(java.util.Locale("ru"), "%.1f км", meters / 1000)
 
-/** Примерное время в пути при выбранной скорости. */
+/** Примерное время в пути при выбранной скорости — в секундах, пока это меньше минуты. */
 fun formatEta(meters: Double, speedKmh: Int): String {
-    val minutes = (meters / (speedKmh / 3.6) / 60).roundToInt().coerceAtLeast(1)
-    return if (minutes < 60) "$minutes мин" else "${minutes / 60} ч ${minutes % 60} мин"
+    val seconds = (meters / (speedKmh / 3.6)).roundToInt().coerceAtLeast(1)
+    return when {
+        seconds < 60 -> "$seconds сек"
+        seconds < 3600 -> "${seconds / 60} мин ${seconds % 60} сек"
+        else -> "${seconds / 3600} ч ${seconds % 3600 / 60} мин"
+    }
 }
 
-/** Выбор скорости: ползунок с шагом 5 км/ч. */
+/** Выбор скорости: от 20 до 3000 км/ч. */
 @Composable
 fun SpeedSlider(speedKmh: Int, onChange: (Int) -> Unit, onChangeFinished: () -> Unit = {}) {
-    var value by remember(speedKmh) { mutableFloatStateOf(speedKmh.toFloat()) }
+    var position by remember { mutableFloatStateOf(speedToPosition(speedKmh)) }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Скорость", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
-            Text("${value.roundToInt()} км/ч", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("$speedKmh км/ч", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         }
         Slider(
-            value = value,
+            value = position,
             onValueChange = {
-                value = it
-                onChange((it / 5).roundToInt() * 5)
+                position = it
+                onChange(positionToSpeed(it))
             },
             onValueChangeFinished = onChangeFinished,
-            valueRange = MIN_SPEED..MAX_SPEED,
-            steps = ((MAX_SPEED - MIN_SPEED) / 5).toInt() - 1,
         )
     }
 }
@@ -142,7 +160,7 @@ fun DrivingContent(
     speedKmh: Int,
     onSpeed: (Int) -> Unit,
     onSpeedFinished: () -> Unit,
-    onPause: () -> Unit,
+    onFinish: () -> Unit,
     onStopHere: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -150,11 +168,11 @@ fun DrivingContent(
             Box(
                 Modifier
                     .size(10.dp)
-                    .background(if (route.paused) MaterialTheme.colorScheme.outline else Color(0xFF2E7D32), CircleShape),
+                    .background(Color(0xFF2E7D32), CircleShape),
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                if (route.paused) "Пауза" else "В пути · ${route.currentKmh} км/ч",
+                "В пути · ${route.currentKmh} км/ч",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -180,10 +198,10 @@ fun DrivingContent(
         SpeedSlider(speedKmh, onChange = onSpeed, onChangeFinished = onSpeedFinished)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             FilledTonalButton(
-                onClick = onPause,
+                onClick = onFinish,
                 shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.weight(1f).height(54.dp),
-            ) { Text(if (route.paused) "Продолжить" else "Пауза", fontSize = 16.sp) }
+            ) { Text("Сразу в конец", fontSize = 16.sp) }
             FilledTonalButton(
                 onClick = onStopHere,
                 shape = RoundedCornerShape(18.dp),

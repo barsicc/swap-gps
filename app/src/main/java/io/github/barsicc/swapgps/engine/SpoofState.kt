@@ -19,7 +19,6 @@ data class RouteProgress(
     val speedKmh: Int,
     /** Скорость прямо сейчас (с учётом поворотов), км/ч. */
     val currentKmh: Int,
-    val paused: Boolean,
 )
 
 /** Текущее состояние подмены, общее для экрана, уведомления и плитки в шторке. */
@@ -99,7 +98,7 @@ object SpoofState {
     }
 
     /** Скорость для маршрутов, км/ч. */
-    fun routeSpeed(context: Context): Int = prefs(context).getInt(KEY_ROUTE_SPEED, 60)
+    fun routeSpeed(context: Context): Int = prefs(context).getInt(KEY_ROUTE_SPEED, 300)
 
     fun setRouteSpeed(context: Context, kmh: Int) {
         prefs(context).edit().putInt(KEY_ROUTE_SPEED, kmh).apply()

@@ -34,14 +34,14 @@ class SpoofService : Service() {
         const val EXTRA_SPEED = "speed"
 
         const val ACTION_ROUTE = "route"
-        const val ACTION_PAUSE = "pause"
-        const val ACTION_RESUME = "resume"
+        const val ACTION_FINISH = "finish"
         const val ACTION_STOP_HERE = "stop_here"
         const val ACTION_SPEED = "speed"
 
         private const val CHANNEL_ID = "spoof"
         private const val NOTIFICATION_ID = 1
         private const val TICK_MS = 500L
+        private const val ROUTE_TICK_MS = 250L
         private const val SAVE_EVERY_MS = 5_000L
 
         /** Маршрут для следующего запуска (передаётся в памяти: точек может быть много). */
@@ -76,10 +76,11 @@ class SpoofService : Service() {
     private val tick = object : Runnable {
         override fun run() {
             val now = SystemClock.elapsedRealtime()
-            val dt = if (lastTick == 0L) TICK_MS / 1000.0 else (now - lastTick) / 1000.0
+            val dt = if (lastTick == 0L) ROUTE_TICK_MS / 1000.0 else (now - lastTick) / 1000.0
             lastTick = now
             step(dt.coerceIn(0.05, 2.0), now)
-            handler?.postDelayed(this, TICK_MS)
+            // Во время поездки — чаще, чтобы точка двигалась плавно даже на большой скорости
+            handler?.postDelayed(this, if (route != null) ROUTE_TICK_MS else TICK_MS)
         }
     }
 
@@ -90,8 +91,7 @@ class SpoofService : Service() {
 
         // Управление уже идущей поездкой
         when (intent?.action) {
-            ACTION_PAUSE -> { route?.paused = true; return START_STICKY }
-            ACTION_RESUME -> { route?.paused = false; return START_STICKY }
+            ACTION_FINISH -> { route?.skipToEnd(); return START_STICKY }
             ACTION_SPEED -> {
                 route?.setSpeedKmh(intent.getIntExtra(EXTRA_SPEED, 60))
                 return START_STICKY
@@ -208,7 +208,6 @@ class SpoofService : Service() {
         remainingMeters = r.remainingMeters,
         speedKmh = (r.maxSpeed * 3.6).roundToInt(),
         currentKmh = (r.currentSpeed * 3.6).roundToInt(),
-        paused = r.paused,
     )
 
     override fun onDestroy() {

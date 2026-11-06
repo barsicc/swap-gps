@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Swap GPS</string>
+    <string name="tile_label">Подмена GPS</string>
+    <string name="notif_channel">Подмена местоположения</string>
+    <string name="notif_title">Подмена активна</string>
+    <string name="notif_reset">Сбросить</string>
+</resources>

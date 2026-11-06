@@ -20,6 +20,9 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "0.1." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
 
+        // Только 64-битные телефоны (все современные) — карта весит много, APK заметно меньше
+        ndk { abiFilters += listOf("arm64-v8a") }
+
         // Ключ Яндекс MapKit подставляется при сборке из секрета YANDEX_MAPKIT_KEY
         buildConfigField("String", "MAPKIT_KEY", "\"" + (System.getenv("YANDEX_MAPKIT_KEY") ?: "") + "\"")
     }
@@ -40,7 +43,8 @@ android {
             signingConfig = if (hasPersonalKey) signingConfigs.getByName("personal") else signingConfigs.getByName("debug")
         }
         release {
-            isMinifyEnabled = true
+            // Без сжатия кода: надёжнее с нативной картой, а проверить на телефоне мы можем не всё
+            isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = if (hasPersonalKey) signingConfigs.getByName("personal") else signingConfigs.getByName("debug")
         }
@@ -74,6 +78,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 
     implementation("com.google.android.gms:play-services-location:21.3.0")
+
+    // Яндекс MapKit: карта, поиск, подсказки адресов, маршруты
+    implementation("com.yandex.android:maps.mobile:4.45.0-full")
 
     testImplementation("junit:junit:4.13.2")
 }

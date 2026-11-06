@@ -77,7 +77,7 @@ import io.github.barsicc.swapgps.util.CoordinateParser
 import kotlinx.coroutines.delay
 
 /** Что из настроек телефона готово для подмены. */
-private data class Checks(
+internal data class Checks(
     val mockApp: Boolean,
     val location: Boolean,
     val notifications: Boolean,
@@ -86,7 +86,7 @@ private data class Checks(
     val allGood get() = mockApp && location && notifications && battery
 }
 
-private fun readChecks(context: Context) = Checks(
+internal fun readChecks(context: Context) = Checks(
     mockApp = MockEngine.isSelectedMockApp(context),
     location = MockEngine.hasLocationPermission(context),
     notifications = Build.VERSION.SDK_INT < 33 ||
@@ -95,198 +95,7 @@ private fun readChecks(context: Context) = Checks(
 )
 
 @Composable
-fun MainScreen() {
-    val context = LocalContext.current
-    val status by SpoofState.status.collectAsStateWithLifecycle()
-
-    // Перепроверяем настройки каждый раз, когда возвращаемся в приложение
-    var resumeCount by remember { mutableIntStateOf(0) }
-    LifecycleResumeEffect(Unit) {
-        resumeCount++
-        onPauseOrDispose { }
-    }
-    val checks = remember(resumeCount, status) { readChecks(context) }
-
-    val permissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        resumeCount++
-    }
-    fun requestPermissions() {
-        val list = buildList {
-            add(Manifest.permission.ACCESS_FINE_LOCATION)
-            add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        permissions.launch(list.toTypedArray())
-    }
-
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .safeDrawingPadding()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Swap GPS", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
-
-            StatusCard(status)
-
-            ControlCard(
-                status = status,
-                checks = checks,
-                onNeedPermissions = ::requestPermissions,
-            )
-
-            AnimatedVisibility(visible = !checks.allGood) {
-                SetupCard(checks, onRequestPermissions = ::requestPermissions)
-            }
-
-            SettingsCard()
-
-            DiagnosticsCard()
-
-            Spacer(Modifier.height(8.dp))
-        }
-    }
-}
-
-@Composable
-private fun StatusCard(status: SpoofStatus) {
-    val active = status.active
-    val warning = status.interrupted && !active
-    val container by animateColorAsState(
-        targetValue = when {
-            active -> MaterialTheme.colorScheme.primaryContainer
-            warning -> MaterialTheme.colorScheme.errorContainer
-            else -> MaterialTheme.colorScheme.surfaceContainerHigh
-        },
-        animationSpec = tween(400),
-        label = "status",
-    )
-
-    // Таймер «сколько уже идёт подмена»
-    var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(active) {
-        while (active) {
-            now = System.currentTimeMillis()
-            delay(1000)
-        }
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = container),
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                imageVector = if (warning) Icons.Filled.Warning else Icons.Filled.LocationOn,
-                contentDescription = null,
-                modifier = Modifier.size(36.dp),
-            )
-            Spacer(Modifier.width(16.dp))
-            Column {
-                Text(
-                    text = when {
-                        active -> "Подмена активна"
-                        warning -> "Подмена была прервана"
-                        else -> "Реальное местоположение"
-                    },
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                when {
-                    active && status.point != null -> {
-                        Text(status.point.format(), fontFamily = FontFamily.Monospace)
-                        Text(
-                            "уже " + DateUtils.formatElapsedTime((now - status.startedAt).coerceAtLeast(0) / 1000),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    warning -> Text(
-                        "Система остановила приложение. Нажмите «Сброс», чтобы вернуть реальное местоположение",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    else -> Text("Подмена выключена", style = MaterialTheme.typography.bodyMedium)
-                }
-                status.error?.let {
-                    Spacer(Modifier.height(6.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ControlCard(status: SpoofStatus, checks: Checks, onNeedPermissions: () -> Unit) {
-    val context = LocalContext.current
-    val keyboard = LocalSoftwareKeyboardController.current
-    var text by remember { mutableStateOf(SpoofState.lastPoint(context)?.format().orEmpty()) }
-    var inputError by remember { mutableStateOf<String?>(null) }
-
-    fun start() {
-        val point = CoordinateParser.parse(text)
-        when {
-            point == null -> inputError = "Не понял координаты. Пример: 55.7558, 37.6173"
-            !checks.location -> onNeedPermissions()
-            !checks.mockApp -> SpoofState.setError("Сначала выберите Swap GPS для фиктивных местоположений (см. ниже)")
-            else -> {
-                inputError = null
-                keyboard?.hide()
-                SpoofState.setError(null)
-                MockEngine.start(context, point)
-            }
-        }
-    }
-
-    Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it; inputError = null },
-                label = { Text("Координаты или ссылка на карту") },
-                placeholder = { Text("55.7558, 37.6173") },
-                singleLine = true,
-                isError = inputError != null,
-                supportingText = inputError?.let { { Text(it) } },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Go),
-                keyboardActions = KeyboardActions(onGo = { start() }),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-
-            Button(
-                onClick = ::start,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (status.active) "Перенести сюда" else "Подменить", fontSize = 17.sp)
-            }
-
-            Button(
-                onClick = { MockEngine.reset(context) },
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                ),
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-            ) {
-                Icon(Icons.Filled.Refresh, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Сброс — вернуть реальное", fontSize = 17.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SetupCard(checks: Checks, onRequestPermissions: () -> Unit) {
+internal fun SetupCard(checks: Checks, onRequestPermissions: () -> Unit) {
     val context = LocalContext.current
     Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -344,7 +153,7 @@ private fun CheckRow(ok: Boolean?, title: String, action: String, onAction: () -
 }
 
 @Composable
-private fun SettingsCard() {
+internal fun SettingsCard() {
     val context = LocalContext.current
     var google by remember { mutableStateOf(SpoofState.isGoogleMockEnabled(context)) }
     Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
@@ -367,7 +176,7 @@ private fun SettingsCard() {
 }
 
 @Composable
-private fun DiagnosticsCard() {
+internal fun DiagnosticsCard() {
     val lines by Diag.lines.collectAsStateWithLifecycle()
     val clipboard = LocalClipboardManager.current
     var expanded by remember { mutableStateOf(false) }

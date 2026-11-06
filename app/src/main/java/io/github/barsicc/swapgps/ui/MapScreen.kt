@@ -91,6 +91,9 @@ import io.github.barsicc.swapgps.engine.SpoofStatus
 import io.github.barsicc.swapgps.map.CameraState
 import io.github.barsicc.swapgps.map.MapController
 import io.github.barsicc.swapgps.map.PlaceSearch
+import io.github.barsicc.swapgps.map.RouteBuilder
+import io.github.barsicc.swapgps.engine.RouteMovement
+import io.github.barsicc.swapgps.engine.SpoofService
 import io.github.barsicc.swapgps.places.Place
 import io.github.barsicc.swapgps.places.Places
 import kotlinx.coroutines.delay
@@ -143,6 +146,13 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
     // Диалог места: null — закрыт; place == null — новое место
     var placeDialog by remember { mutableStateOf<PlaceDialogState?>(null) }
 
+    // Маршрут: предпросмотр до поездки и линия текущей поездки
+    val routeBuilder = remember { RouteBuilder() }
+    var preview by remember { mutableStateOf<RoutePreview?>(null) }
+    val routeLine by SpoofState.routeLine.collectAsStateWithLifecycle()
+    val driving = status.route != null
+    var speedKmh by remember { mutableIntStateOf(SpoofState.routeSpeed(context)) }
+
     val night = isSystemInDarkTheme()
     LaunchedEffect(controller, night) { controller?.setNightMode(night) }
 
@@ -163,10 +173,19 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
         controller?.showSpoofPoint(if (status.active) status.point else null, markerColor)
     }
 
+    val routeColor = MaterialTheme.colorScheme.primary.toArgb()
+    LaunchedEffect(controller, preview?.points, routeLine) {
+        controller?.showRoute(preview?.points?.takeIf { it.isNotEmpty() } ?: routeLine, routeColor)
+    }
+    LaunchedEffect(driving) { if (driving) controller?.resumeFollow() }
+    LaunchedEffect(status.point, driving) {
+        if (driving) status.point?.let { controller?.follow(it) }
+    }
+
     // Адрес под меткой
     var address by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(camera.center, camera.moving, search) {
-        if (camera.moving || search == null) return@LaunchedEffect
+    LaunchedEffect(camera.center, camera.moving, search, driving) {
+        if (camera.moving || search == null || driving) return@LaunchedEffect
         delay(350)
         search.address(camera.center, camera.zoom.toInt()) { address = it }
     }
@@ -197,12 +216,53 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
         }
     }
 
+    /** Построить маршрут от текущей подменённой точки (или от реального местоположения) до метки. */
+    fun buildRoute() {
+        val destination = target ?: return
+        when {
+            !checks.location -> { requestPermissions(); return }
+            !checks.mockApp -> {
+                SpoofState.setError("Выберите Swap GPS для фиктивных местоположений")
+                showSettings = true
+                return
+            }
+        }
+        SpoofState.setError(null)
+        preview = RoutePreview()
+        val build: (GeoPoint) -> Unit = { from ->
+            if (RouteMovement.distance(from, destination) < 30) {
+                preview = RoutePreview(building = false, error = "Передвиньте карту к месту назначения")
+            } else {
+                routeBuilder.build(from, destination) { route, error ->
+                    if (preview == null) return@build // уже отменили
+                    preview = if (route != null) {
+                        controller?.showWhole(route.points)
+                        RoutePreview(route.points, route.meters, building = false)
+                    } else {
+                        RoutePreview(building = false, error = error ?: "Не удалось построить маршрут")
+                    }
+                }
+            }
+        }
+        val active = status.point.takeIf { status.active }
+        if (active != null) {
+            build(active)
+        } else {
+            currentLocation(context) { from ->
+                if (from != null) build(from)
+                else preview = RoutePreview(building = false, error = "Не удалось определить, откуда ехать. Включите подмену в начальной точке")
+            }
+        }
+    }
+
     val savedHere = Places.at(target).takeIf { places.isNotEmpty() }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         if (mapView != null) {
             AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
-            CenterPin(moving = camera.moving, modifier = Modifier.align(Alignment.Center))
+            if (preview == null && !driving) {
+                CenterPin(moving = camera.moving, modifier = Modifier.align(Alignment.Center))
+            }
         } else {
             NoMapHint(Modifier.align(Alignment.Center))
         }
@@ -225,7 +285,7 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
             AnimatedVisibility(
-                visible = !searchFocused && places.isNotEmpty(),
+                visible = !searchFocused && places.isNotEmpty() && preview == null && !driving,
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically(),
             ) {
@@ -250,7 +310,15 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
             if (controller != null) {
                 SmallFloatingActionButton(
-                    onClick = { moveToDeviceLocation(context, controller, animated = true) },
+                    onClick = {
+                        val p = status.point
+                        if (driving && p != null) {
+                            controller.resumeFollow()
+                            controller.follow(p)
+                        } else {
+                            moveToDeviceLocation(context, controller, animated = true)
+                        }
+                    },
                     shape = CircleShape,
                     containerColor = MaterialTheme.colorScheme.surface,
                     modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 12.dp),
@@ -268,7 +336,53 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
                     target?.let { placeDialog = PlaceDialogState(savedHere, it, suggestedName = address) }
                 },
                 onStart = ::startSpoof,
-                onReset = { MockEngine.reset(context) },
+                onRoute = ::buildRoute,
+                onReset = {
+                    preview = null
+                    routeBuilder.cancel()
+                    MockEngine.reset(context)
+                },
+                routeContent = when {
+                    preview != null -> {
+                        {
+                            RoutePreviewContent(
+                                preview = preview!!,
+                                speedKmh = speedKmh,
+                                onSpeed = {
+                                    speedKmh = it
+                                    SpoofState.setRouteSpeed(context, it)
+                                },
+                                onGo = {
+                                    preview?.points?.let { MockEngine.startRoute(context, it) }
+                                    preview = null
+                                },
+                                onCancel = {
+                                    routeBuilder.cancel()
+                                    preview = null
+                                },
+                            )
+                        }
+                    }
+                    driving -> {
+                        {
+                            DrivingContent(
+                                route = status.route!!,
+                                speedKmh = speedKmh,
+                                onSpeed = {
+                                    speedKmh = it
+                                    SpoofState.setRouteSpeed(context, it)
+                                },
+                                onSpeedFinished = { MockEngine.routeCommand(context, SpoofService.ACTION_SPEED, speedKmh) },
+                                onPause = {
+                                    val action = if (status.route?.paused == true) SpoofService.ACTION_RESUME else SpoofService.ACTION_PAUSE
+                                    MockEngine.routeCommand(context, action)
+                                },
+                                onStopHere = { MockEngine.routeCommand(context, SpoofService.ACTION_STOP_HERE) },
+                            )
+                        }
+                    }
+                    else -> null
+                },
             )
         }
     }
@@ -317,6 +431,21 @@ private fun moveToDeviceLocation(context: Context, controller: MapController, an
         .addOnSuccessListener { loc ->
             if (loc != null) controller.moveTo(GeoPoint(loc.latitude, loc.longitude), MapController.DEFAULT_ZOOM, animated)
         }
+}
+
+/** Где телефон сейчас (реальное местоположение, если подмена выключена). */
+@SuppressLint("MissingPermission")
+private fun currentLocation(context: Context, onResult: (GeoPoint?) -> Unit) {
+    if (!MockEngine.hasLocationPermission(context)) return onResult(null)
+    val client = LocationServices.getFusedLocationProviderClient(context)
+    client.lastLocation
+        .addOnSuccessListener { loc ->
+            if (loc != null) onResult(GeoPoint(loc.latitude, loc.longitude))
+            else client.getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, null)
+                .addOnSuccessListener { cur -> onResult(cur?.let { GeoPoint(it.latitude, it.longitude) }) }
+                .addOnFailureListener { onResult(null) }
+        }
+        .addOnFailureListener { onResult(null) }
 }
 
 /** Метка в центре карты. Приподнимается, пока карту двигают. */
@@ -413,7 +542,10 @@ private fun BottomPanel(
     hasMap: Boolean,
     onSave: () -> Unit,
     onStart: () -> Unit,
+    onRoute: () -> Unit,
     onReset: () -> Unit,
+    /** Содержимое для маршрута (предпросмотр или поездка) вместо обычного. */
+    routeContent: (@Composable () -> Unit)?,
 ) {
     Surface(
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
@@ -427,6 +559,13 @@ private fun BottomPanel(
                 .padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+          if (routeContent != null) {
+            Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                routeContent()
+                // Во время поездки вернуть реальное местоположение можно в любой момент
+                if (status.route != null) ResetButton(prominent = true, onReset = onReset)
+            }
+          } else {
             ActiveLine(status)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -460,36 +599,55 @@ private fun BottomPanel(
             }
 
             Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = onStart,
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier.fillMaxWidth().height(54.dp),
-                ) {
-                    Text(if (status.active) "Перенести подмену сюда" else "Подменить сюда", fontSize = 16.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = onStart,
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.weight(1f).height(54.dp),
+                    ) {
+                        Text(if (status.active) "Перенести сюда" else "Подменить сюда", fontSize = 16.sp)
+                    }
+                    FilledTonalButton(
+                        onClick = onRoute,
+                        enabled = hasMap,
+                        shape = RoundedCornerShape(18.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                        modifier = Modifier.height(54.dp),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_route), null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Маршрут", fontSize = 15.sp)
+                    }
                 }
                 // Во время подмены кнопка возврата заметнее, без подмены — спокойнее
-                if (status.active || status.interrupted) {
-                    Button(
-                        onClick = onReset,
-                        shape = RoundedCornerShape(18.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                        ),
-                        modifier = Modifier.fillMaxWidth().height(54.dp),
-                    ) {
-                        Text("Вернуть реальное местоположение", fontSize = 16.sp)
-                    }
-                } else {
-                    FilledTonalButton(
-                        onClick = onReset,
-                        shape = RoundedCornerShape(18.dp),
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                    ) {
-                        Text("Вернуть реальное местоположение", fontSize = 15.sp)
-                    }
-                }
+                ResetButton(prominent = status.active || status.interrupted, onReset = onReset)
             }
+          }
+        }
+    }
+}
+
+@Composable
+private fun ResetButton(prominent: Boolean, onReset: () -> Unit) {
+    if (prominent) {
+        Button(
+            onClick = onReset,
+            shape = RoundedCornerShape(18.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+            ),
+            modifier = Modifier.fillMaxWidth().height(54.dp),
+        ) {
+            Text("Вернуть реальное местоположение", fontSize = 16.sp)
+        }
+    } else {
+        FilledTonalButton(
+            onClick = onReset,
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) {
+            Text("Вернуть реальное местоположение", fontSize = 15.sp)
         }
     }
 }

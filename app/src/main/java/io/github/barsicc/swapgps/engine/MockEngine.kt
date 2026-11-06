@@ -72,6 +72,22 @@ object MockEngine {
     // ---------- Запуск ----------
 
     /** Запустить подмену в точке (или перенести уже идущую подмену в новую точку). */
+    /** Поехать по маршруту (точки маршрута по дорогам, первая — откуда едем). */
+    fun startRoute(context: Context, points: List<GeoPoint>) {
+        if (points.size < 2) return
+        val app = context.applicationContext
+        SpoofService.pendingRoute = points
+        ContextCompat.startForegroundService(app, Intent(app, SpoofService::class.java).setAction(SpoofService.ACTION_ROUTE))
+    }
+
+    /** Пауза / продолжить / остановиться здесь / сменить скорость во время поездки. */
+    fun routeCommand(context: Context, action: String, speedKmh: Int? = null) {
+        val app = context.applicationContext
+        val intent = Intent(app, SpoofService::class.java).setAction(action)
+        speedKmh?.let { intent.putExtra(SpoofService.EXTRA_SPEED, it) }
+        runCatching { app.startService(intent) }
+    }
+
     fun start(context: Context, point: GeoPoint) {
         val app = context.applicationContext
         val intent = Intent(app, SpoofService::class.java)
@@ -142,11 +158,11 @@ object MockEngine {
 
     /** Отправить точку во все подменённые источники. Вызывается сервисом раз в секунду. */
     @SuppressLint("MissingPermission")
-    fun push(context: Context, point: GeoPoint) {
+    fun push(context: Context, point: GeoPoint, speed: Float = 0f, bearing: Float = 0f) {
         val lm = context.getSystemService(LocationManager::class.java) ?: return
         for (name in providers) {
             try {
-                lm.setTestProviderLocation(name, buildLocation(name, point))
+                lm.setTestProviderLocation(name, buildLocation(name, point, speed, bearing))
             } catch (e: Exception) {
                 // Источник могли убрать сбросом между тиками — ничего страшного
             }
@@ -154,7 +170,7 @@ object MockEngine {
         if (googleMockOn) {
             try {
                 LocationServices.getFusedLocationProviderClient(context.applicationContext)
-                    .setMockLocation(buildLocation(LocationManager.GPS_PROVIDER, point))
+                    .setMockLocation(buildLocation(LocationManager.GPS_PROVIDER, point, speed, bearing))
             } catch (e: SecurityException) {
                 googleMockOn = false
                 Diag.log("Сервисы Google перестали принимать подмену", e)
@@ -162,14 +178,14 @@ object MockEngine {
         }
     }
 
-    private fun buildLocation(provider: String, point: GeoPoint): Location =
+    private fun buildLocation(provider: String, point: GeoPoint, speed: Float, bearing: Float): Location =
         Location(provider).apply {
             latitude = point.latitude
             longitude = point.longitude
             altitude = ALTITUDE
             accuracy = if (provider == LocationManager.NETWORK_PROVIDER) NETWORK_ACCURACY else GPS_ACCURACY
-            speed = 0f
-            bearing = 0f
+            this.speed = speed
+            this.bearing = bearing
             time = System.currentTimeMillis()
             elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
             verticalAccuracyMeters = 4f

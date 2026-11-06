@@ -11,6 +11,17 @@ data class GeoPoint(val latitude: Double, val longitude: Double) {
     fun format(): String = String.format(java.util.Locale.US, "%.6f, %.6f", latitude, longitude)
 }
 
+/** Ход поездки по маршруту. */
+data class RouteProgress(
+    val totalMeters: Double,
+    val remainingMeters: Double,
+    /** Выбранная скорость, км/ч. */
+    val speedKmh: Int,
+    /** Скорость прямо сейчас (с учётом поворотов), км/ч. */
+    val currentKmh: Int,
+    val paused: Boolean,
+)
+
 /** Текущее состояние подмены, общее для экрана, уведомления и плитки в шторке. */
 data class SpoofStatus(
     /** Подмена сейчас работает (сервис запущен и отправляет координаты). */
@@ -21,6 +32,8 @@ data class SpoofStatus(
     val interrupted: Boolean = false,
     /** Последняя ошибка, понятная человеку. */
     val error: String? = null,
+    /** Не null — едем по маршруту. */
+    val route: RouteProgress? = null,
 )
 
 /** Короткое сообщение для пользователя (показывается плашкой и исчезает). */
@@ -34,6 +47,7 @@ object SpoofState {
     private const val KEY_LAST_LAT = "last_lat"
     private const val KEY_LAST_LON = "last_lon"
     private const val KEY_GOOGLE_MOCK = "google_mock"
+    private const val KEY_ROUTE_SPEED = "route_speed"
 
     private val _status = MutableStateFlow(SpoofStatus())
     val status: StateFlow<SpoofStatus> = _status.asStateFlow()
@@ -59,7 +73,7 @@ object SpoofState {
         }
     }
 
-    fun setActive(context: Context, point: GeoPoint) {
+    fun setActive(context: Context, point: GeoPoint, route: RouteProgress? = null) {
         prefs(context).edit()
             .putBoolean(KEY_RUNNING, true)
             .putLong(KEY_LAT, point.latitude.toRawBits())
@@ -68,10 +82,31 @@ object SpoofState {
             .putLong(KEY_LAST_LON, point.longitude.toRawBits())
             .apply()
         val startedAt = if (_status.value.active) _status.value.startedAt else System.currentTimeMillis()
-        _status.value = SpoofStatus(active = true, point = point, startedAt = startedAt)
+        _status.value = SpoofStatus(active = true, point = point, startedAt = startedAt, route = route)
+    }
+
+    /** Обновить положение во время езды (без записи на диск — это делается реже). */
+    fun updateMoving(point: GeoPoint, route: RouteProgress?) {
+        _status.value = _status.value.copy(point = point, route = route)
+    }
+
+    /** Линия маршрута для карты (null — маршрута нет). */
+    private val _routeLine = MutableStateFlow<List<GeoPoint>?>(null)
+    val routeLine: StateFlow<List<GeoPoint>?> = _routeLine.asStateFlow()
+
+    fun setRouteLine(points: List<GeoPoint>?) {
+        _routeLine.value = points
+    }
+
+    /** Скорость для маршрутов, км/ч. */
+    fun routeSpeed(context: Context): Int = prefs(context).getInt(KEY_ROUTE_SPEED, 60)
+
+    fun setRouteSpeed(context: Context, kmh: Int) {
+        prefs(context).edit().putInt(KEY_ROUTE_SPEED, kmh).apply()
     }
 
     fun setInactive(context: Context, error: String? = null) {
+        _routeLine.value = null
         prefs(context).edit().putBoolean(KEY_RUNNING, false).apply()
         _status.value = SpoofStatus(active = false, point = null, error = error)
     }

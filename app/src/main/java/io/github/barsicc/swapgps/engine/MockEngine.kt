@@ -212,6 +212,7 @@ object MockEngine {
         SpoofState.setInactive(app)
         SpoofTileService.requestUpdate(app)
         Diag.log("Подмена снята")
+        SpoofState.notify("Подмена выключена. Возвращаем ваше реальное местоположение…")
         requestFreshFix(app)
     }
 
@@ -223,9 +224,25 @@ object MockEngine {
     private fun requestFreshFix(context: Context) {
         if (!hasLocationPermission(context)) {
             Diag.log("Нет разрешения на геолокацию — свежие координаты не запрошены")
+            SpoofState.notify("Подмена выключена")
             return
         }
         val started = SystemClock.elapsedRealtime()
+        // Сообщаем пользователю один раз — когда первым откликнется Google или GPS
+        val reported = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun reportReal() {
+            if (reported.compareAndSet(false, true)) {
+                SpoofState.notify("Готово: ваше реальное местоположение вернулось")
+            }
+        }
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (reported.compareAndSet(false, true)) {
+                SpoofState.notify(
+                    "Подмена выключена. Телефон ещё ищет вас — на улице или у окна это быстрее",
+                    success = false,
+                )
+            }
+        }, FRESH_FIX_TIMEOUT_MS)
 
         // 1. Сервисы Google
         val cts = CancellationTokenSource()
@@ -233,7 +250,10 @@ object MockEngine {
             .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cts.token)
             .addOnSuccessListener { loc ->
                 if (loc == null) Diag.log("Google: реальные координаты пока не получены")
-                else Diag.log("Google: реальная точка через ${SystemClock.elapsedRealtime() - started} мс, точность ${loc.accuracy.toInt()} м")
+                else {
+                    Diag.log("Google: реальная точка через ${SystemClock.elapsedRealtime() - started} мс, точность ${loc.accuracy.toInt()} м")
+                    reportReal()
+                }
             }
             .addOnFailureListener { Diag.log("Google: ошибка получения координат", it) }
         Handler(Looper.getMainLooper()).postDelayed({ cts.cancel() }, FRESH_FIX_TIMEOUT_MS)
@@ -245,6 +265,7 @@ object MockEngine {
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
                 Diag.log("GPS: реальная точка через ${SystemClock.elapsedRealtime() - started} мс")
+                reportReal()
                 lm.removeUpdates(this)
             }
 

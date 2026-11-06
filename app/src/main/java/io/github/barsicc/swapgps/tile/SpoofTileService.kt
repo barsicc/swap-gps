@@ -37,6 +37,7 @@ class SpoofTileService : TileService() {
         // Прерванную системой подмену тоже сбрасываем — на ней могла «залипнуть» точка
         if (status.active || status.interrupted) {
             MockEngine.reset(applicationContext)
+            android.widget.Toast.makeText(this, "Подмена выключена, возвращаем реальное местоположение", android.widget.Toast.LENGTH_SHORT).show()
             refresh()
         } else {
             openApp()
@@ -49,7 +50,7 @@ class SpoofTileService : TileService() {
         val active = status.active || status.interrupted
         tile.state = if (active) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            tile.subtitle = if (active) "Нажмите — сброс" else "Выключена"
+            tile.subtitle = if (active) "Нажмите, чтобы выключить" else "Выключена"
         }
         tile.updateTile()
     }

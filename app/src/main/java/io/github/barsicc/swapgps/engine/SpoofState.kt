@@ -23,6 +23,9 @@ data class SpoofStatus(
     val error: String? = null,
 )
 
+/** Короткое сообщение для пользователя (показывается плашкой и исчезает). */
+data class Notice(val text: String, val success: Boolean, val id: Long = System.nanoTime())
+
 object SpoofState {
     private const val PREFS = "spoof_state"
     private const val KEY_RUNNING = "running"
@@ -34,6 +37,13 @@ object SpoofState {
 
     private val _status = MutableStateFlow(SpoofStatus())
     val status: StateFlow<SpoofStatus> = _status.asStateFlow()
+
+    private val _notice = MutableStateFlow<Notice?>(null)
+    val notice: StateFlow<Notice?> = _notice.asStateFlow()
+
+    fun notify(text: String, success: Boolean = true) {
+        _notice.value = Notice(text, success)
+    }
 
     private fun prefs(context: Context): SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

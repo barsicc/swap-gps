@@ -8,5 +8,6 @@ import android.content.Intent
 class ResetReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         MockEngine.reset(context)
+        android.widget.Toast.makeText(context, "Подмена выключена, возвращаем реальное местоположение", android.widget.Toast.LENGTH_SHORT).show()
     }
 }

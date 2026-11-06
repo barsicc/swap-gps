@@ -40,6 +40,13 @@ object DeviceSetup {
         launch(context, miui) || openAppDetails(context)
     }
 
+    fun isAutostartConfirmed(context: Context): Boolean =
+        context.getSharedPreferences("setup", Context.MODE_PRIVATE).getBoolean("autostart", false)
+
+    fun setAutostartConfirmed(context: Context) {
+        context.getSharedPreferences("setup", Context.MODE_PRIVATE).edit().putBoolean("autostart", true).apply()
+    }
+
     fun openAppDetails(context: Context): Boolean =
         launch(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
 

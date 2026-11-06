@@ -119,11 +119,17 @@ internal fun SetupCard(checks: Checks, onRequestPermissions: () -> Unit) {
                 onAction = { DeviceSetup.openBatterySettings(context) },
             )
             if (DeviceSetup.isXiaomi) {
+                // Проверить автозапуск Xiaomi нельзя — отмечаем выполненным, когда пользователь в него зашёл
+                var autostartDone by remember { mutableStateOf(DeviceSetup.isAutostartConfirmed(context)) }
                 CheckRow(
-                    ok = null,
-                    title = "Xiaomi: включите «Автозапуск» для Swap GPS",
+                    ok = autostartDone,
+                    title = "Xiaomi: «Автозапуск» для Swap GPS",
                     action = "Открыть",
-                    onAction = { DeviceSetup.openAutostartSettings(context) },
+                    onAction = {
+                        DeviceSetup.openAutostartSettings(context)
+                        DeviceSetup.setAutostartConfirmed(context)
+                        autostartDone = true
+                    },
                 )
             }
         }

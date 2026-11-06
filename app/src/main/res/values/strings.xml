@@ -4,5 +4,5 @@
     <string name="tile_label">Подмена GPS</string>
     <string name="notif_channel">Подмена местоположения</string>
     <string name="notif_title">Подмена активна</string>
-    <string name="notif_reset">Сбросить</string>
+    <string name="notif_reset">Вернуть реальное</string>
 </resources>

@@ -47,12 +47,29 @@ object DeviceSetup {
         context.getSharedPreferences("setup", Context.MODE_PRIVATE).edit().putBoolean("autostart", true).apply()
     }
 
+    /**
+     * Включён ли фоновый поиск Wi-Fi / Bluetooth для определения местоположения.
+     * Некоторые приложения (например, Яндекс.Карты) по нему сами находят реальное место
+     * в обход подмены — отсюда редкие скачки.
+     */
+    fun isScanningForLocationOn(context: Context): Boolean {
+        val cr = context.contentResolver
+        val wifi = runCatching { Settings.Global.getInt(cr, "wifi_scan_always_enabled", 0) }.getOrDefault(0)
+        val ble = runCatching { Settings.Global.getInt(cr, "ble_scan_always_enabled", 0) }.getOrDefault(0)
+        return wifi == 1 || ble == 1
+    }
+
+    fun openScanningSettings(context: Context) {
+        launch(context, Intent("android.settings.LOCATION_SCANNING_SETTINGS")) || openLocationSettings(context).let { true }
+    }
+
     fun openAppDetails(context: Context): Boolean =
         launch(context, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
 
     fun openLocationSettings(context: Context) {
         launch(context, Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
     }
+
 
     private fun launch(context: Context, intent: Intent): Boolean = try {
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

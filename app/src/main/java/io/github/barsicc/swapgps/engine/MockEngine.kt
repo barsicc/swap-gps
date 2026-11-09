@@ -40,7 +40,7 @@ object MockEngine {
     private const val NETWORK_ACCURACY = 12f
 
     /** Сколько ждать свежих реальных координат после сброса. */
-    private const val FRESH_FIX_TIMEOUT_MS = 30_000L
+    private const val FRESH_FIX_TIMEOUT_MS = 45_000L
 
     private val providers: List<String>
         get() = buildList {
@@ -191,6 +191,11 @@ object MockEngine {
             verticalAccuracyMeters = 4f
             speedAccuracyMetersPerSecond = 0.3f
             bearingAccuracyDegrees = 30f
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) elapsedRealtimeUncertaintyNanos = 100_000.0
+            // Некоторые приложения смотрят, сколько спутников «видит» GPS
+            if (provider != LocationManager.NETWORK_PROVIDER) {
+                extras = android.os.Bundle().apply { putInt("satellites", 11 + (point.latitude * 1e4).toInt().mod(4)) }
+            }
         }
 
     // ---------- Сброс ----------
@@ -204,25 +209,41 @@ object MockEngine {
         Diag.log("Сброс…")
         app.stopService(Intent(app, SpoofService::class.java))
 
+        // Подменённые источники только удаляем, НЕ выключая их перед этим: выключение
+        // рассылает приложениям «GPS отключён», и многие (счётчики расстояния, навигаторы)
+        // после этого перестают следить за местоположением. Удаление же незаметно
+        // возвращает настоящий источник, и приложения продолжают получать координаты.
         val lm = app.getSystemService(LocationManager::class.java)
         if (lm != null) {
             for (name in providers) {
-                runCatching { lm.setTestProviderEnabled(name, false) }
                 runCatching { lm.removeTestProvider(name) }
                     .onFailure { if (it is SecurityException) Diag.log("Не удалось убрать «$name»", it) }
             }
+            Diag.log("Включены источники: ${runCatching { lm.getProviders(true).joinToString() }.getOrDefault("?")}")
         }
 
         // Выключаем подмену Google всегда, даже если не мы её включали в этом запуске:
         // именно из-за неё местоположение «залипает»
         googleMockOn = false
         try {
-            LocationServices.getFusedLocationProviderClient(app)
-                .setMockMode(false)
-                .addOnSuccessListener { Diag.log("Сервисы Google: режим подмены выключен") }
+            val flp = LocationServices.getFusedLocationProviderClient(app)
+            flp.setMockMode(false)
+                .addOnSuccessListener {
+                    Diag.log("Сервисы Google: режим подмены выключен")
+                    // Отдать приложениям накопленные реальные точки сразу, не дожидаясь пакета
+                    runCatching { flp.flushLocations() }
+                }
                 .addOnFailureListener { Diag.log("Сервисы Google: не удалось выключить подмену", it) }
         } catch (e: SecurityException) {
             Diag.log("Сервисы Google: нет прав выключить подмену", e)
+        }
+
+        // Помочь GPS быстрее поймать спутники: обновить время и прогноз орбит.
+        // Данные спутников НЕ стираем (холодный старт), иначе реальная точка найдётся дольше.
+        if (lm != null) {
+            for (command in listOf("force_time_injection", "force_psds_injection", "force_xtra_injection")) {
+                runCatching { lm.sendExtraCommand(LocationManager.GPS_PROVIDER, command, null) }
+            }
         }
 
         SpoofState.setInactive(app)

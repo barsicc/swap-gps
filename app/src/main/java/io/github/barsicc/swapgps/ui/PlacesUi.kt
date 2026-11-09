@@ -43,38 +43,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.barsicc.swapgps.places.Place
 
-/** Ряд «Моих мест» под поиском: касание — перейти, долгое — переименовать или удалить. */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun PlacesRow(places: List<Place>, onClick: (Place) -> Unit, onLongClick: (Place) -> Unit) {
-    val haptic = LocalHapticFeedback.current
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(places, key = { it.id }) { place ->
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surface,
-                shadowElevation = 3.dp,
-                modifier = Modifier.combinedClickable(
-                    onClick = { onClick(place) },
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick(place)
-                    },
-                ),
-            ) {
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.LocationOn, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(6.dp))
-                    Text(place.name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-    }
-}
-
 /** Сохранить новое место или переименовать / удалить существующее. */
 @Composable
 fun PlaceDialog(state: PlaceDialogState, onDismiss: () -> Unit, onSave: (String) -> Unit, onDelete: () -> Unit) {

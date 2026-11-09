@@ -6,7 +6,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -70,6 +70,7 @@ fun SearchBox(
     onPoint: (GeoPoint) -> Unit,
     onSettings: () -> Unit,
     onFocusChange: (Boolean) -> Unit,
+    onPlaceLongClick: (Place) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val focus = LocalFocusManager.current
@@ -198,7 +199,10 @@ fun SearchBox(
                             )
                         }
                         items(places, key = { it.id }) { p ->
-                            ResultRow(Icons.Filled.LocationOn, p.name, p.point.format(), null) {
+                            ResultRow(
+                                Icons.Filled.LocationOn, p.name, "Удерживайте, чтобы изменить", null,
+                                onLongClick = { close(); onPlaceLongClick(p) },
+                            ) {
                                 close()
                                 onPoint(p.point)
                             }
@@ -218,12 +222,20 @@ fun SearchBox(
 }
 
 @Composable
-private fun ResultRow(icon: ImageVector, title: String, subtitle: String?, trailing: String?, onClick: () -> Unit) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun ResultRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String?,
+    trailing: String?,
+    onLongClick: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     Column {
         Row(
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

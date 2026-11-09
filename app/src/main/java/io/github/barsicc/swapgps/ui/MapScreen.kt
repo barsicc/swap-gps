@@ -129,6 +129,7 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
         permissions.launch(list.toTypedArray())
     }
 
+    val spoofSearch = remember(mapView) { if (mapView == null) null else runCatching { PlaceSearch() }.getOrNull() }
     val search = remember(mapView) {
         if (mapView == null) null
         else runCatching { PlaceSearch() }.onFailure { Diag.log("Поиск Яндекса недоступен", it) }.getOrNull()
@@ -181,6 +182,18 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
     LaunchedEffect(status.point, driving) {
         if (driving) status.point?.let { controller?.follow(it) }
     }
+
+    // Адрес места, где мы сейчас по подмене
+    var spoofAddress by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(status.active, status.point, driving, spoofSearch) {
+        val p = status.point
+        if (!status.active || p == null || driving || spoofSearch == null) return@LaunchedEffect
+        spoofAddress = Places.at(p)?.name
+        if (spoofAddress == null) spoofSearch.address(p, 17) { spoofAddress = it }
+    }
+    // Метка стоит там же, где подмена?
+    val atSpoof = status.active && status.point != null && target != null &&
+        RouteMovement.distance(status.point!!, target) < 20
 
     // Адрес под меткой
     var address by remember { mutableStateOf<String?>(null) }
@@ -282,19 +295,9 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
                 onPoint = goTo,
                 onSettings = { showSettings = true },
                 onFocusChange = { searchFocused = it },
+                onPlaceLongClick = { placeDialog = PlaceDialogState(it, it.point) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            AnimatedVisibility(
-                visible = !searchFocused && places.isNotEmpty() && preview == null && !driving,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically(),
-            ) {
-                PlacesRow(
-                    places = places,
-                    onClick = { goTo(it.point) },
-                    onLongClick = { placeDialog = PlaceDialogState(it, it.point) },
-                )
-            }
             AnimatedVisibility(visible = !searchFocused && !checks.allGood, enter = fadeIn(), exit = fadeOut()) {
                 Pill(
                     text = "Нужна настройка телефона",
@@ -328,6 +331,9 @@ fun MapScreen(mapView: MapView?, controller: MapController?) {
             }
             BottomPanel(
                 status = status,
+                spoofAddress = spoofAddress,
+                atSpoof = atSpoof,
+                onShowSpoof = { status.point?.let { controller?.moveTo(it) } },
                 target = target,
                 title = savedHere?.name ?: if (camera.moving) null else address,
                 saved = savedHere != null,
@@ -533,6 +539,9 @@ private fun NoticeBanner(notice: Notice?, modifier: Modifier = Modifier) {
 @Composable
 private fun BottomPanel(
     status: SpoofStatus,
+    spoofAddress: String?,
+    atSpoof: Boolean,
+    onShowSpoof: () -> Unit,
     target: GeoPoint?,
     title: String?,
     saved: Boolean,
@@ -563,10 +572,18 @@ private fun BottomPanel(
                 if (status.route != null) ResetButton(prominent = true, onReset = onReset)
             }
           } else {
-            ActiveLine(status)
+            ActiveCard(status, address = spoofAddress.takeIf { !atSpoof }, onShow = onShowSpoof)
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
+                    // Во время подмены подписываем, что это новая точка, а не та, где мы сейчас
+                    if (status.active && !atSpoof) {
+                        Text(
+                            "Новая точка",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     Text(
                         text = title ?: if (hasMap) "…" else "Точка",
                         style = MaterialTheme.typography.titleMedium,
@@ -649,9 +666,12 @@ private fun ResetButton(prominent: Boolean, onReset: () -> Unit) {
     }
 }
 
-/** «Подмена активна · 03:12» — только во время подмены (или если её прервала система). */
+/**
+ * Где вы сейчас по подмене: «Вы здесь · 03:12» и адрес (если метку увели в сторону).
+ * Касание — показать это место на карте. Без подмены не показывается.
+ */
 @Composable
-private fun ActiveLine(status: SpoofStatus) {
+private fun ActiveCard(status: SpoofStatus, address: String?, onShow: () -> Unit) {
     if (!status.active && !status.interrupted) return
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(status.active) {
@@ -660,15 +680,53 @@ private fun ActiveLine(status: SpoofStatus) {
             delay(1000)
         }
     }
-    val (dot, text) = if (status.active) {
-        Color(0xFF2E7D32) to "Подмена активна · " + DateUtils.formatElapsedTime((now - status.startedAt).coerceAtLeast(0) / 1000)
-    } else {
-        MaterialTheme.colorScheme.error to "Подмену остановила система — верните реальное местоположение"
+    if (!status.active) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
+            Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Подмену остановила система — верните реальное местоположение",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
     }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).background(dot, CircleShape))
-        Spacer(Modifier.width(8.dp))
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Surface(
+        onClick = onShow,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).background(Color(0xFF2E7D32), CircleShape))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Вы здесь · " + DateUtils.formatElapsedTime((now - status.startedAt).coerceAtLeast(0) / 1000),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                if (address != null) {
+                    Text(
+                        address,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (address != null) {
+                Icon(
+                    painterResource(R.drawable.ic_my_location),
+                    contentDescription = "Показать на карте",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
     }
 }
 

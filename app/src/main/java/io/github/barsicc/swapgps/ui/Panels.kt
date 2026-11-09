@@ -118,6 +118,13 @@ internal fun SetupCard(checks: Checks, onRequestPermissions: () -> Unit) {
                 action = "Открыть",
                 onAction = { DeviceSetup.openBatterySettings(context) },
             )
+            // Не обязательно, но убирает редкие скачки в приложениях с собственным поиском по Wi-Fi
+            CheckRow(
+                ok = if (DeviceSetup.isScanningForLocationOn(context)) null else true,
+                title = "Совет: выключите «Поиск сетей Wi-Fi» и «Поиск Bluetooth» в настройках местоположения — меньше скачков",
+                action = "Открыть",
+                onAction = { DeviceSetup.openScanningSettings(context) },
+            )
             if (DeviceSetup.isXiaomi) {
                 // Проверить автозапуск Xiaomi нельзя — отмечаем выполненным, когда пользователь в него зашёл
                 var autostartDone by remember { mutableStateOf(DeviceSetup.isAutostartConfirmed(context)) }
